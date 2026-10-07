@@ -26,23 +26,43 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo "==> Switching Proxmox repos to no-subscription"
-# Disable the enterprise repo (requires a paid license we don't have)
-if [ -f /etc/apt/sources.list.d/pve-enterprise.list ]; then
-    sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/pve-enterprise.list
-fi
-if [ -f /etc/apt/sources.list.d/ceph.list ]; then
-    sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/ceph.list
+CODENAME=$(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release)
+if [ -z "$CODENAME" ]; then
+    echo "Could not detect VERSION_CODENAME from /etc/os-release, aborting." >&2
+    exit 1
 fi
 
-# Enable the free no-subscription repo if it isn't already present
-PVE_NOSUB_LIST=/etc/apt/sources.list.d/pve-no-subscription.list
-if [ ! -f "$PVE_NOSUB_LIST" ]; then
-    CODENAME=$(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release)
-    if [ -z "$CODENAME" ]; then
-        echo "Could not detect VERSION_CODENAME from /etc/os-release, aborting." >&2
-        exit 1
+# Disable the enterprise repos (require a paid license we don't have).
+# PVE 8 and older use one-line .list files; PVE 9+ uses deb822 .sources
+# files, which are switched off with an "Enabled: no" line instead.
+for list in pve-enterprise ceph; do
+    if [ -f "/etc/apt/sources.list.d/${list}.list" ]; then
+        sed -i 's/^deb/#deb/' "/etc/apt/sources.list.d/${list}.list"
     fi
-    echo "deb http://download.proxmox.com/debian/pve ${CODENAME} pve-no-subscription" > "$PVE_NOSUB_LIST"
+    src="/etc/apt/sources.list.d/${list}.sources"
+    if [ -f "$src" ]; then
+        if grep -q '^Enabled:' "$src"; then
+            sed -i 's/^Enabled:.*/Enabled: no/' "$src"
+        else
+            echo "Enabled: no" >> "$src"
+        fi
+    fi
+done
+
+# Enable the free no-subscription repo if it isn't already present
+if ! grep -rqs 'pve-no-subscription' /etc/apt/sources.list.d/; then
+    if [ -f /etc/apt/sources.list.d/pve-enterprise.sources ]; then
+        cat > /etc/apt/sources.list.d/proxmox.sources <<EOF
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: ${CODENAME}
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+    else
+        echo "deb http://download.proxmox.com/debian/pve ${CODENAME} pve-no-subscription" \
+            > /etc/apt/sources.list.d/pve-no-subscription.list
+    fi
 fi
 
 echo "==> Updating package lists and upgrading"
