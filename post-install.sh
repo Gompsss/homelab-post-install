@@ -25,6 +25,10 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Nobody is at the keyboard to answer prompts (the Pico types this and
+# walks away), so make apt take the default answer instead of hanging.
+export DEBIAN_FRONTEND=noninteractive
+
 echo "==> Switching Proxmox repos to no-subscription"
 CODENAME=$(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release)
 if [ -z "$CODENAME" ]; then
@@ -70,10 +74,12 @@ apt-get update
 apt-get -y full-upgrade
 
 echo "==> Installing fail2ban"
-apt-get -y install fail2ban
+apt-get -y install fail2ban python3-systemd
 cat > /etc/fail2ban/jail.d/sshd.local <<'EOF'
 [sshd]
 enabled = true
+# PVE 9 has no /var/log/auth.log (no rsyslog), so read the systemd journal
+backend = systemd
 port    = ssh
 maxretry = 5
 bantime  = 1h
